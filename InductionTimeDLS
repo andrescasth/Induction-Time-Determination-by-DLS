@@ -1,0 +1,105 @@
+import pandas as pd
+import numpy as np
+import os
+
+def detect_induction_time(excel_file, sheet=0, time_column='Time', intensity_column='kcps'):
+    try:
+        # Load data from the Excel file
+        df = pd.read_excel(excel_file, sheet_name=sheet)
+        
+        # Ensure the necessary columns are present
+        if time_column not in df.columns or intensity_column not in df.columns:
+            raise ValueError(f"Columns '{time_column}' or '{intensity_column}' are missing in the file {excel_file}.")
+        
+        print(f"Processing file: {excel_file}")
+        
+        df_filtered = df[(df[time_column] >= 12) & (df[time_column] <= 18)]
+        
+        # Check if there is enough data in the range
+        if df_filtered.empty:
+            print(f"No data in the specified time range (12-18 s) for file {excel_file}.")
+            return None
+        
+        # Calculate the baseline
+        baseline = df_filtered[intensity_column]
+        
+        # Calculate the mean and standard deviation of the baseline
+        baseline_mean = np.mean(baseline)
+        baseline_std = np.std(baseline, ddof=1)
+        
+        if np.isnan(baseline_mean) or np.isnan(baseline_std):
+            print(f"Error in calculating mean or standard deviation for file {excel_file}.")
+            return None
+        
+        # Define the nucleation threshold
+        threshold = baseline_mean + 3 * baseline_std
+        
+        # Determine the last time of the baseline
+        baseline_time = df_filtered[time_column].iloc[-1]
+        
+        # Filter data after the baseline
+        df_post_baseline = df[df[time_column] > baseline_time]
+        
+        if df_post_baseline.empty:
+            print(f"No data after the baseline for file {excel_file}.")
+            return None
+        
+        # Search for the point where the increase starts in the data after the baseline
+        diffs = np.abs(np.diff(df_post_baseline[intensity_column]))
+        stability_threshold = np.median(diffs) * 1.1  
+        
+        # Find the point where the increase starts
+        significant_changes = np.where(diffs > stability_threshold)[0]
+        
+        if len(significant_changes) == 0:
+            print(f"No significant changes in kcps after the baseline for file {excel_file}.")
+            return None
+        
+        # Starting point of the change
+        change_point = significant_changes[0]
+        
+        # Identify the induction time using a continuous trend strategy
+        consecutive = 0
+        for i in range(change_point, len(df_post_baseline)):
+            if df_post_baseline[intensity_column].iloc[i] > threshold:
+                consecutive += 1
+                if consecutive >= 5: 
+                    return df_post_baseline[time_column].iloc[i - 4]  
+            else:
+                consecutive = 0
+        
+        print(f"No nucleation detected in the file {excel_file}.")
+        return None
+    
+    except Exception as e:
+        print(f"Error processing {excel_file}: {e}")
+        return None
+
+def process_multiple_files(directory_path):
+    # Get a list of all Excel files in the specified directory
+    files = [f for f in os.listdir(directory_path) if f.endswith('.xlsx')]
+    
+    # Process each file
+    results = {}
+    for file in files:
+        file_path = os.path.join(directory_path, file)
+        induction_time = detect_induction_time(file_path)
+        results[file] = induction_time
+    return results
+
+def save_results_to_excel(results, output_file):
+    # Convert the results dictionary to a DataFrame
+    results_df = pd.DataFrame(list(results.items()), columns=["File", "Induction Time"])
+    
+    # Save the DataFrame to an Excel file
+    results_df.to_excel(output_file, index=False)
+    print(f"Results saved to {output_file}")
+
+directory_path = "C:\\Users\\RESEARCH\\Desktop\\pandas"  
+results = process_multiple_files(directory_path)
+
+# Specify the output file path for saving the results
+output_file = "C:\\Users\\RESEARCH\\Desktop\\pandas\\induction_times.xlsx"
+
+# Save results to Excel
+save_results_to_excel(results, output_file)
